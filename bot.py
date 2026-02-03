@@ -53,6 +53,24 @@ async def intercept(
 
     target = channel or interaction.channel
 
+    # Check if the user has permission to send messages in the target channel
+    permissions = target.permissions_for(interaction.user)
+    if not permissions.send_messages:
+        await interaction.followup.send(
+            "BIOCOM: INSUFFICIENT CLEARANCE FOR TRANSMISSION.",
+            ephemeral=True
+        )
+        return
+    
+    # Check if the user has Zeus role (role name: "Zeus")
+    zeus_role = discord.utils.get(interaction.guild.roles, name="Zeus")
+    if zeus_role not in interaction.user.roles:
+        await interaction.followup.send(
+            "BIOCOM: UNAUTHORIZED OPERATOR. ACCESS DENIED.",
+            ephemeral=True
+        )
+        return
+
     # Safety check
     if not hasattr(target, "send"):
         await interaction.followup.send(
