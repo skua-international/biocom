@@ -14,7 +14,7 @@ services:
     env_file:
       - .env
     volumes:
+      - ./uploads/missions:/app/uploads/missions:rw
+      - ./uploads/presets:/app/uploads/presets:rw
       # Docker
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Podman (rootless)
-      - /run/user/1000/podman/podman.sock:/var/run/docker.sock:ro
