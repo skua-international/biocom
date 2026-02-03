@@ -2,9 +2,16 @@ import os
 import discord
 import docker
 from discord import app_commands
+from docker.errors import DockerException
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 GUILD_ID = os.environ["SERVER_ID"]
+
+def get_container_client():
+    try:
+        return docker.from_env()
+    except DockerException as e:
+        return None
 
 class Bot(discord.Client):
     def __init__(self):
@@ -18,10 +25,14 @@ class Bot(discord.Client):
         await self.tree.sync(guild=guild)
 
 bot = Bot()
-docker_client = docker.from_env()
 
 @bot.event
 async def on_ready():
+    docker_client = get_container_client()
+    if docker_client is None:
+        print("BIOCOM: FAILED TO CONNECT TO CONTAINER RUNTIME.")
+        return
+
     info = docker_client.info()
 
     runtime = "podman" if "podman" in info.get("OperatingSystem", "").lower() else "docker"
@@ -110,7 +121,7 @@ async def containers(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     try:
-        running = docker_client.containers.list()
+        running = get_container_client().containers.list()
     except Exception as e:
         await interaction.followup.send(
             f"BIOCOM: DOCKER ACCESS FAILURE.\n{e}",
