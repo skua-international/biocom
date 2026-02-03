@@ -3,12 +3,18 @@ version: "3.8"
 
 services:
   biocom:
+    user: root
     build:
       context: .
     image: biocom-bot
     container_name: biocom-bot
     restart: unless-stopped
     environment:
-      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DOCKER_HOST: unix:///var/run/docker.sock
     env_file:
       - .env
+    volumes:
+      # Docker
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Podman (rootless)
+      - /run/user/1000/podman/podman.sock:/var/run/docker.sock:ro

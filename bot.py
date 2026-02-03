@@ -1,5 +1,6 @@
 import os
 import discord
+import docker
 from discord import app_commands
 
 TOKEN = os.environ["DISCORD_TOKEN"]
@@ -17,9 +18,14 @@ class Bot(discord.Client):
         await self.tree.sync(guild=guild)
 
 bot = Bot()
+docker_client = docker.from_env()
 
 @bot.event
 async def on_ready():
+    info = docker_client.info()
+
+    runtime = "podman" if "podman" in info.get("OperatingSystem", "").lower() else "docker"
+    print(f"BIOCOM attached to {runtime.upper()}")
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
     # KEEPING YOUR ACTIVITY EXACTLY
@@ -84,6 +90,56 @@ async def intercept(
 
     await interaction.followup.send(
         "BIOCOM: MESSAGE SENT.",
+        ephemeral=True
+    )
+
+@bot.tree.command(
+    name="containers",
+    description="List running Docker containers on the BIOCOM stack"
+)
+@app_commands.checks.has_role("Server Admin")
+@app_commands.checks.has_permissions(administrator=True)
+async def containers(interaction: discord.Interaction):
+    if interaction.guild_id != int(GUILD_ID):
+        await interaction.response.send_message(
+            "BIOCOM: COMMAND UNAVAILABLE.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        running = docker_client.containers.list()
+    except Exception as e:
+        await interaction.followup.send(
+            f"BIOCOM: DOCKER ACCESS FAILURE.\n{e}",
+            ephemeral=True
+        )
+        return
+
+    if not running:
+        await interaction.followup.send(
+            "BIOCOM: NO ACTIVE CONTAINERS DETECTED.",
+            ephemeral=True
+        )
+        return
+
+    lines = []
+    for c in running:
+        name = c.name
+        image = c.image.tags[0] if c.image.tags else c.image.short_id
+        status = c.status
+        lines.append(f"• `{name}` — `{image}` — `{status}`")
+
+    output = "\n".join(lines)
+
+    # Discord message limit safety
+    if len(output) > 1900:
+        output = output[:1900] + "\n…truncated"
+
+    await interaction.followup.send(
+        f"BIOCOM: ACTIVE CONTAINERS\n{output}",
         ephemeral=True
     )
 
