@@ -1,0 +1,14 @@
+name: skua-biocom
+version: "3.8"
+
+services:
+  biocom:
+    build:
+      context: .
+    image: biocom-bot
+    container_name: biocom-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+    env_file:
+      - .env
