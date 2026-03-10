@@ -144,11 +144,10 @@ func deferEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
-// followupEphemeral sends an ephemeral followup message.
+// followupEphemeral edits the deferred response with content.
 func followupEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Content: content,
-		Flags:   discordgo.MessageFlagsEphemeral,
+	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		Content: &content,
 	})
 }
 

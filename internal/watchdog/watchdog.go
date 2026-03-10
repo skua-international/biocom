@@ -112,11 +112,13 @@ func (w *Watchdog) warmup(ctx context.Context) {
 		state := w.states[name]
 		w.mu.Unlock()
 
-		// Set initial state without alerting
+		// Set initial state and collect issues for a single consolidated alert
 		switch {
 		case info == nil:
-			// Container does not exist — mark as already down
+			// Container does not exist — alert once, mark as down
 			state.wasDown = true
+			state.lastAlerted = time.Now()
+			w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
 			w.logger.Info("Watchdog warmup: container not found", "container", name)
 
 		case info.State == "running", info.State == "created":
@@ -124,14 +126,18 @@ func (w *Watchdog) warmup(ctx context.Context) {
 			state.wasDown = false
 
 		case info.State == "restarting":
-			// Already restarting — mark and track
+			// Already restarting — alert once, mark and track
 			state.wasDown = true
 			state.restartSeen = time.Now()
+			state.lastAlerted = time.Now()
+			w.alert(fmt.Sprintf("🟡 **CONTAINER STUCK RESTARTING:** `%s`\nStatus: `%s`", name, info.Status))
 			w.logger.Info("Watchdog warmup: container restarting", "container", name)
 
 		default:
-			// exited, paused, dead, etc. — mark as down
+			// exited, paused, dead, etc. — alert once, mark as down
 			state.wasDown = true
+			state.lastAlerted = time.Now()
+			w.alert(fmt.Sprintf("🔴 **CONTAINER DOWN:** `%s`\nState: `%s` — Status: `%s`", name, info.State, info.Status))
 			w.logger.Info("Watchdog warmup: container down", "container", name, "state", info.State)
 		}
 	}
