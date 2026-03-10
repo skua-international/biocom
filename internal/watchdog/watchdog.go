@@ -13,11 +13,17 @@ import (
 	"github.com/skua/biocom/internal/docker"
 )
 
+// stableThreshold is how long a container must stay running before we
+// consider it recovered. Prevents flapping containers from generating
+// repeated down/recovery alerts.
+const stableThreshold = 60 * time.Second
+
 // containerState tracks per-container alert state.
 type containerState struct {
-	lastAlerted time.Time
-	wasDown     bool
-	restartSeen time.Time // first time we saw "restarting"
+	lastAlerted  time.Time
+	wasDown      bool
+	restartSeen  time.Time // first time we saw "restarting"
+	runningSince time.Time // when we first saw "running" after a down event
 }
 
 // Watchdog monitors containers and alerts via Discord.
@@ -81,6 +87,8 @@ func (w *Watchdog) Run(ctx context.Context) {
 func (w *Watchdog) check(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
 
+	w.logger.Debug("Watchdog tick", "containers", len(cfg.Containers), "enabled", cfg.Enabled)
+
 	if !cfg.Enabled || len(cfg.Containers) == 0 {
 		return
 	}
@@ -116,23 +124,37 @@ func (w *Watchdog) check(ctx context.Context) {
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
 			}
+			state.runningSince = time.Time{}
 
-		case info.State == "running":
-			// Healthy — clear state, send recovery if it was down
-			if state.wasDown {
-				w.alert(fmt.Sprintf("🟢 **CONTAINER RECOVERED:** `%s`\nStatus: `%s`", name, info.Status))
+		case info.State == "running", info.State == "created":
+			if !state.wasDown {
+				// Healthy and not recovering — reset tracking
+				state.runningSince = time.Time{}
+				state.restartSeen = time.Time{}
+				break
 			}
-			state.wasDown = false
-			state.restartSeen = time.Time{}
+
+			// Was down — wait for stable running before declaring recovery
+			if state.runningSince.IsZero() {
+				state.runningSince = now
+			}
+			if now.Sub(state.runningSince) >= stableThreshold {
+				w.alert(fmt.Sprintf("🟢 **CONTAINER RECOVERED:** `%s`\nStatus: `%s`", name, info.Status))
+				state.wasDown = false
+				state.runningSince = time.Time{}
+				state.restartSeen = time.Time{}
+			}
 
 		case info.State == "restarting":
 			// Track how long it's been restarting
 			if state.restartSeen.IsZero() {
 				state.restartSeen = now
 			}
+			state.runningSince = time.Time{}
 
+			// Alert once when restart exceeds the timeout
 			stuck := now.Sub(state.restartSeen) >= cfg.RestartTTL
-			if stuck && (!state.wasDown || now.Sub(state.lastAlerted) >= cfg.RestartTTL) {
+			if stuck && !state.wasDown {
 				w.alert(fmt.Sprintf(
 					"🟡 **CONTAINER STUCK RESTARTING:** `%s`\nRestarting for %s. Status: `%s`",
 					name,
@@ -151,6 +173,7 @@ func (w *Watchdog) check(ctx context.Context) {
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
 			}
+			state.runningSince = time.Time{}
 		}
 	}
 }
