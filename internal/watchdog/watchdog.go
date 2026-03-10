@@ -110,35 +110,50 @@ func (w *Watchdog) warmup(ctx context.Context) {
 
 		w.mu.Lock()
 		state := w.states[name]
-		w.mu.Unlock()
 
-		// Set initial state and collect issues for a single consolidated alert
+		// Set initial state and alert for downed containers (only if not already marked)
 		switch {
 		case info == nil:
 			// Container does not exist — alert once, mark as down
-			state.wasDown = true
-			state.lastAlerted = time.Now()
-			w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
-			w.logger.Info("Watchdog warmup: container not found", "container", name)
+			if !state.wasDown {
+				state.wasDown = true
+				state.lastAlerted = time.Now()
+				w.mu.Unlock()
+				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
+				w.logger.Info("Watchdog warmup: container not found", "container", name)
+			} else {
+				w.mu.Unlock()
+			}
 
 		case info.State == "running", info.State == "created":
 			// Healthy
 			state.wasDown = false
+			w.mu.Unlock()
 
 		case info.State == "restarting":
 			// Already restarting — alert once, mark and track
-			state.wasDown = true
-			state.restartSeen = time.Now()
-			state.lastAlerted = time.Now()
-			w.alert(fmt.Sprintf("🟡 **CONTAINER STUCK RESTARTING:** `%s`\nStatus: `%s`", name, info.Status))
-			w.logger.Info("Watchdog warmup: container restarting", "container", name)
+			if !state.wasDown {
+				state.wasDown = true
+				state.restartSeen = time.Now()
+				state.lastAlerted = time.Now()
+				w.mu.Unlock()
+				w.alert(fmt.Sprintf("🟡 **CONTAINER STUCK RESTARTING:** `%s`\nStatus: `%s`", name, info.Status))
+				w.logger.Info("Watchdog warmup: container restarting", "container", name)
+			} else {
+				w.mu.Unlock()
+			}
 
 		default:
 			// exited, paused, dead, etc. — alert once, mark as down
-			state.wasDown = true
-			state.lastAlerted = time.Now()
-			w.alert(fmt.Sprintf("🔴 **CONTAINER DOWN:** `%s`\nState: `%s` — Status: `%s`", name, info.State, info.Status))
-			w.logger.Info("Watchdog warmup: container down", "container", name, "state", info.State)
+			if !state.wasDown {
+				state.wasDown = true
+				state.lastAlerted = time.Now()
+				w.mu.Unlock()
+				w.alert(fmt.Sprintf("🔴 **CONTAINER DOWN:** `%s`\nState: `%s` — Status: `%s`", name, info.State, info.Status))
+				w.logger.Info("Watchdog warmup: container down", "container", name, "state", info.State)
+			} else {
+				w.mu.Unlock()
+			}
 		}
 	}
 
@@ -149,7 +164,7 @@ func (w *Watchdog) warmup(ctx context.Context) {
 func (w *Watchdog) check(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
 
-	w.logger.Info("Watchdog tick", "containers", len(cfg.Containers), "enabled", cfg.Enabled)
+	w.logger.Debug("Watchdog tick", "containers", len(cfg.Containers), "enabled", cfg.Enabled)
 
 	if !cfg.Enabled || len(cfg.Containers) == 0 {
 		return
@@ -171,28 +186,31 @@ func (w *Watchdog) check(ctx context.Context) {
 			continue
 		}
 
+		now := time.Now()
+
 		w.mu.Lock()
 		state := w.states[name]
-		w.mu.Unlock()
-
-		now := time.Now()
 
 		switch {
 		case info == nil:
 			// Container does not exist
+			state.runningSince = time.Time{}
 			if !state.wasDown {
-				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
 				state.wasDown = true
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
+				w.mu.Unlock()
+				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
+			} else {
+				w.mu.Unlock()
 			}
-			state.runningSince = time.Time{}
 
 		case info.State == "running", info.State == "created":
 			if !state.wasDown {
 				// Healthy and not recovering — reset tracking
 				state.runningSince = time.Time{}
 				state.restartSeen = time.Time{}
+				w.mu.Unlock()
 				break
 			}
 
@@ -201,10 +219,13 @@ func (w *Watchdog) check(ctx context.Context) {
 				state.runningSince = now
 			}
 			if now.Sub(state.runningSince) >= stableThreshold {
-				w.alert(fmt.Sprintf("🟢 **CONTAINER RECOVERED:** `%s`\nStatus: `%s`", name, info.Status))
 				state.wasDown = false
 				state.runningSince = time.Time{}
 				state.restartSeen = time.Time{}
+				w.mu.Unlock()
+				w.alert(fmt.Sprintf("🟢 **CONTAINER RECOVERED:** `%s`\nStatus: `%s`", name, info.Status))
+			} else {
+				w.mu.Unlock()
 			}
 
 		case info.State == "restarting":
@@ -217,25 +238,31 @@ func (w *Watchdog) check(ctx context.Context) {
 			// Alert once when restart exceeds the timeout
 			stuck := now.Sub(state.restartSeen) >= cfg.RestartTTL
 			if stuck && !state.wasDown {
+				state.wasDown = true
+				state.lastAlerted = now
+				w.mu.Unlock()
 				w.alert(fmt.Sprintf(
 					"🟡 **CONTAINER STUCK RESTARTING:** `%s`\nRestarting for %s. Status: `%s`",
 					name,
 					now.Sub(state.restartSeen).Round(time.Second),
 					info.Status,
 				))
-				state.wasDown = true
-				state.lastAlerted = now
+			} else {
+				w.mu.Unlock()
 			}
 
 		default:
 			// exited, paused, dead, created, etc.
+			state.runningSince = time.Time{}
 			if !state.wasDown {
-				w.alert(fmt.Sprintf("🔴 **CONTAINER DOWN:** `%s`\nState: `%s` — Status: `%s`", name, info.State, info.Status))
 				state.wasDown = true
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
+				w.mu.Unlock()
+				w.alert(fmt.Sprintf("🔴 **CONTAINER DOWN:** `%s`\nState: `%s` — Status: `%s`", name, info.State, info.Status))
+			} else {
+				w.mu.Unlock()
 			}
-			state.runningSince = time.Time{}
 		}
 	}
 }
