@@ -1,20 +1,58 @@
 name: skua-biocom
-version: "3.8"
 
 services:
   biocom:
-    user: root
     build:
       context: .
-    image: biocom-bot
+      dockerfile: Dockerfile
+    image: biocom-bot:latest
     container_name: biocom-bot
     restart: unless-stopped
+    
+    # Run as root to access Docker socket (required for container ops)
+    user: root
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "/biocom", "-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
     environment:
       DOCKER_HOST: unix:///var/run/docker.sock
+      UPLOAD_BASE: /app/uploads
+      TZ: UTC
+    
     env_file:
       - .env
+    
     volumes:
       - ./uploads/missions:/app/uploads/missions:rw
       - ./uploads/presets:/app/uploads/presets:rw
-      # Docker
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    
+    # Read-only root filesystem (uploads mounted rw)
+    read_only: true
+    
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
