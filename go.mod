@@ -6,7 +6,6 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/bwmarrin/discordgo v0.28.1
 	github.com/docker/docker v27.4.1+incompatible
-	github.com/fsnotify/fsnotify v1.9.0
 )
 
 require (

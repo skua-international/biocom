@@ -18,16 +18,16 @@ all: lint test build
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod=vendor $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 	@echo "Built: $(BUILD_DIR)/$(BINARY_NAME)"
 
 ## run: Run the application locally
 run:
-	go run $(CMD_DIR)/main.go
+	go run -mod=vendor $(CMD_DIR)/main.go
 
 ## test: Run tests
 test:
-	go test -v -race -cover ./...
+	go test -mod=vendor -v -race -cover ./...
 
 ## lint: Run linters
 lint:
@@ -45,10 +45,10 @@ clean:
 	@go clean -cache
 	@echo "Cleaned."
 
-## deps: Download dependencies
+## deps: Vendor dependencies
 deps:
-	go mod download
 	go mod tidy
+	go mod vendor
 
 ## docker-build: Build Docker image
 docker-build:

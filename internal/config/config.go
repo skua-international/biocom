@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/fsnotify/fsnotify"
 )
 
 // WatchdogConfig holds watchdog settings from the TOML config.
@@ -162,60 +161,44 @@ func (c *Config) reload() error {
 	return nil
 }
 
-// WatchFile watches the TOML config file for changes and reloads automatically.
+// WatchFile polls the TOML config file for changes and reloads automatically.
+// Uses stat-based polling since inotify doesn't work across Docker bind mounts.
 // Blocks until context is cancelled.
 func (c *Config) WatchFile(ctx context.Context) error {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return fmt.Errorf("failed to create file watcher: %w", err)
-	}
-	defer watcher.Close()
+	const pollInterval = 2 * time.Second
 
-	// Watch the directory (handles editors that write-and-rename)
-	dir := filepath.Dir(c.configPath)
-	if err := watcher.Add(dir); err != nil {
-		return fmt.Errorf("failed to watch directory %s: %w", dir, err)
+	c.logger.Info("Polling config file for changes", "path", c.configPath, "poll_interval", pollInterval)
+
+	// Seed with current mod time (ignore error — file may not exist yet)
+	var lastModTime time.Time
+	if info, err := os.Stat(c.configPath); err == nil {
+		lastModTime = info.ModTime()
 	}
 
-	base := filepath.Base(c.configPath)
-	c.logger.Info("Watching config file for changes", "path", c.configPath)
-
-	// Debounce: editors can fire multiple events in quick succession
-	var debounce *time.Timer
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return nil
-			}
-			if filepath.Base(event.Name) != base {
+		case <-ticker.C:
+			info, err := os.Stat(c.configPath)
+			if err != nil {
+				// File might have been removed temporarily; skip this tick
 				continue
 			}
-			if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+			modTime := info.ModTime()
+			if modTime.Equal(lastModTime) {
 				continue
 			}
+			lastModTime = modTime
 
-			// Reset debounce timer
-			if debounce != nil {
-				debounce.Stop()
+			if err := c.reload(); err != nil {
+				c.logger.Error("Config reload failed", "error", err)
+			} else {
+				c.logger.Info("Config reloaded successfully", "path", c.configPath)
 			}
-			debounce = time.AfterFunc(500*time.Millisecond, func() {
-				if err := c.reload(); err != nil {
-					c.logger.Error("Config reload failed", "error", err)
-				} else {
-					c.logger.Info("Config reloaded successfully", "path", c.configPath)
-				}
-			})
-
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return nil
-			}
-			c.logger.Error("File watcher error", "error", err)
 		}
 	}
 }

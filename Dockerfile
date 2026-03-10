@@ -10,15 +10,11 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /src
 
-# Download dependencies (cached layer)
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy source code
+# Copy source code and vendored dependencies
 COPY . .
 
-# Build static binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Build static binary using vendored dependencies
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor \
     -ldflags="-w -s -extldflags '-static'" \
     -o /biocom \
     ./cmd/biocom
