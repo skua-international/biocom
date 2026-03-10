@@ -289,16 +289,17 @@ func (w *Watchdog) alert(message string) {
 		msg = msg[:1900] + "\n…truncated"
 	}
 
+	w.logger.Info("Watchdog sending alert",
+		"channel", cfg.AlertChannelID,
+		"role", cfg.AlertRoleID,
+		"message", strings.SplitN(message, "\n", 2)[0],
+	)
+
 	_, err := w.session.ChannelMessageSend(cfg.AlertChannelID, msg)
 	if err != nil {
 		w.logger.Error("Watchdog failed to send alert",
 			"channel", cfg.AlertChannelID,
 			"error", err,
-		)
-	} else {
-		w.logger.Info("Watchdog alert sent",
-			"channel", cfg.AlertChannelID,
-			"message", strings.SplitN(message, "\n", 2)[0],
 		)
 	}
 }
