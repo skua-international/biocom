@@ -3,7 +3,7 @@
 # ============================================================
 # Build stage
 # ============================================================
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -23,6 +23,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /biocom \
     ./cmd/biocom
 
+# Create minimal passwd/group for scratch (so Docker can resolve user names)
+RUN printf 'root:x:0:0:root:/root:/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/sbin/nologin\n' > /etc/passwd.scratch \
+ && printf 'root:x:0:\nnobody:x:65534:\n' > /etc/group.scratch
+
 # ============================================================
 # Final stage - minimal runtime image
 # ============================================================
@@ -32,13 +36,11 @@ FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
+# Minimal passwd/group so Docker can resolve user names (scratch has none)
+COPY --from=builder /etc/passwd.scratch /etc/passwd
+COPY --from=builder /etc/group.scratch /etc/group
+
 # Copy binary
 COPY --from=builder /biocom /biocom
-
-# Create upload directories (will be mounted as volumes)
-# Note: actual directories created at runtime via config
-
-# Run as non-root user (UID 65534 = nobody)
-USER 65534:65534
 
 ENTRYPOINT ["/biocom"]
