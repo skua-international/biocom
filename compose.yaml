@@ -33,12 +33,14 @@ services:
     environment:
       DOCKER_HOST: unix:///var/run/docker.sock
       UPLOAD_BASE: /app/uploads
+      BIOCOM_CONFIG: /app/biocom.toml
       TZ: UTC
     
     env_file:
       - .env
     
     volumes:
+      - ./biocom.toml:/app/biocom.toml:ro
       - ./uploads/missions:/app/uploads/missions:rw
       - ./uploads/presets:/app/uploads/presets:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
