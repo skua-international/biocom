@@ -69,8 +69,8 @@ func (w *Watchdog) Run(ctx context.Context) {
 		)
 	})
 
-	// Run immediately on start, then on ticker
-	w.check(ctx)
+	// Warmup: establish baseline state without alerting
+	w.warmup(ctx)
 
 	for {
 		select {
@@ -83,11 +83,67 @@ func (w *Watchdog) Run(ctx context.Context) {
 	}
 }
 
+// warmup establishes baseline container state without sending alerts.
+// This prevents spurious alerts for containers that are already down when
+// the watchdog starts.
+func (w *Watchdog) warmup(ctx context.Context) {
+	cfg := w.cfgSource.Watchdog()
+
+	if !cfg.Enabled || len(cfg.Containers) == 0 {
+		return
+	}
+
+	w.mu.Lock()
+	for _, name := range cfg.Containers {
+		if _, ok := w.states[name]; !ok {
+			w.states[name] = &containerState{}
+		}
+	}
+	w.mu.Unlock()
+
+	for _, name := range cfg.Containers {
+		info, err := w.dockerClient.InspectByName(ctx, name)
+		if err != nil {
+			w.logger.Error("Watchdog warmup inspect failed", "container", name, "error", err)
+			continue
+		}
+
+		w.mu.Lock()
+		state := w.states[name]
+		w.mu.Unlock()
+
+		// Set initial state without alerting
+		switch {
+		case info == nil:
+			// Container does not exist — mark as already down
+			state.wasDown = true
+			w.logger.Info("Watchdog warmup: container not found", "container", name)
+
+		case info.State == "running", info.State == "created":
+			// Healthy
+			state.wasDown = false
+
+		case info.State == "restarting":
+			// Already restarting — mark and track
+			state.wasDown = true
+			state.restartSeen = time.Now()
+			w.logger.Info("Watchdog warmup: container restarting", "container", name)
+
+		default:
+			// exited, paused, dead, etc. — mark as down
+			state.wasDown = true
+			w.logger.Info("Watchdog warmup: container down", "container", name, "state", info.State)
+		}
+	}
+
+	w.logger.Info("Watchdog warmup complete", "containers", len(cfg.Containers))
+}
+
 // check inspects all watched containers and sends alerts as needed.
 func (w *Watchdog) check(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
 
-	w.logger.Debug("Watchdog tick", "containers", len(cfg.Containers), "enabled", cfg.Enabled)
+	w.logger.Info("Watchdog tick", "containers", len(cfg.Containers), "enabled", cfg.Enabled)
 
 	if !cfg.Enabled || len(cfg.Containers) == 0 {
 		return
