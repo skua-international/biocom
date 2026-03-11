@@ -184,6 +184,7 @@ func (c *Config) WatchFile(ctx context.Context) error {
 		case <-ticker.C:
 			currentHash := c.hashFile()
 			if currentHash == lastHash {
+				c.logger.Debug("Config file hash unchanged", "path", c.configPath, "hash", currentHash)
 				continue
 			}
 			c.logger.Info("Config file change detected", "old_hash", lastHash, "new_hash", currentHash)

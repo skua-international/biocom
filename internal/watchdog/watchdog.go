@@ -132,7 +132,7 @@ func (w *Watchdog) warmup(ctx context.Context) {
 				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
 			} else {
 				w.mu.Unlock()
-				w.logger.Info("Watchdog warmup: skipping alert, already marked down", "container", name)
+				w.logger.Debug("Watchdog warmup: skipping alert, already marked down", "container", name)
 			}
 
 		case info.State == "running", info.State == "created":
@@ -174,17 +174,28 @@ func (w *Watchdog) warmup(ctx context.Context) {
 func (w *Watchdog) check(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
 
-	w.logger.Info("Watchdog check() called", "containers", len(cfg.Containers), "enabled", cfg.Enabled, "states", w.states)
+	w.logger.Debug("Watchdog check() called", "containers", len(cfg.Containers), "enabled", cfg.Enabled, "states", w.states)
 
 	if !cfg.Enabled || len(cfg.Containers) == 0 {
 		return
 	}
 
-	// Ensure states map has entries for current container list
+	// Sync states map with current container list
 	w.mu.Lock()
+	// Add new containers
 	for _, name := range cfg.Containers {
 		if _, ok := w.states[name]; !ok {
 			w.states[name] = &containerState{}
+		}
+	}
+	// Remove containers no longer in config
+	current := make(map[string]struct{}, len(cfg.Containers))
+	for _, name := range cfg.Containers {
+		current[name] = struct{}{}
+	}
+	for name := range w.states {
+		if _, ok := current[name]; !ok {
+			delete(w.states, name)
 		}
 	}
 	w.mu.Unlock()
@@ -202,7 +213,7 @@ func (w *Watchdog) check(ctx context.Context) {
 		state := w.states[name]
 		wasDownBefore := state.wasDown
 
-		w.logger.Info("Watchdog check() examining container",
+		w.logger.Debug("Watchdog check() examining container",
 			"container", name,
 			"info_nil", info == nil,
 			"wasDown", wasDownBefore,
@@ -221,7 +232,7 @@ func (w *Watchdog) check(ctx context.Context) {
 				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
 			} else {
 				w.mu.Unlock()
-				w.logger.Info("Watchdog check(): skipping alert, wasDown=true", "container", name)
+				w.logger.Debug("Watchdog check(): skipping alert, wasDown=true", "container", name)
 			}
 
 		case info.State == "running", info.State == "created":
