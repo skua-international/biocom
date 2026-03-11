@@ -146,6 +146,7 @@ func (b *Bot) onInteraction(s *discordgo.Session, i *discordgo.InteractionCreate
 
 		handlers := map[string]func(context.Context, *discordgo.Session, *discordgo.InteractionCreate){
 			"ping":           b.handlePing,
+			"is_the_box_up":  b.handleIsTheBoxUp,
 			"intercept":      b.handleIntercept,
 			"upload_mission": b.handleUploadMission,
 			"upload_preset":  b.handleUploadPreset,

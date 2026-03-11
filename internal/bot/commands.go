@@ -1,9 +1,11 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -65,6 +67,10 @@ func (b *Bot) getCommandDefinitions() []*discordgo.ApplicationCommand {
 					Required:    true,
 				},
 			},
+		},
+		{
+			Name:        "is_the_box_up",
+			Description: "Is the box up?",
 		},
 		{
 			Name:        "containers",
@@ -150,6 +156,24 @@ func followupEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, con
 // handlePing handles the /ping command.
 func (b *Bot) handlePing(_ context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) {
 	respondEphemeral(s, i, "BIOCOM: STATUS OPERATIONAL. GLOBAL LOOP.")
+}
+
+// handleIsTheBoxUp handles the /is_the_box_up command.
+func (b *Bot) handleIsTheBoxUp(_ context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) {
+	quote := boxQuotes[rand.IntN(len(boxQuotes))]
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: fmt.Sprintf("<@%s> BIOCOM: %s", i.Member.User.ID, quote),
+			Files: []*discordgo.File{
+				{
+					Name:        "is_the_box_up.png",
+					ContentType: "image/png",
+					Reader:      bytes.NewReader(isTheBoxUpPNG),
+				},
+			},
+		},
+	})
 }
 
 // handleIntercept handles the /intercept command.
