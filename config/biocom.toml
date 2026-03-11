@@ -20,11 +20,11 @@ interval_seconds = 1
 
 # Discord channel ID where alerts are posted
 # board channel
-alert_channel_id = "833118103998824503"
+alert_channel_id = "1481147942407503932"
 
 # Discord role ID to ping on alerts (leave empty to disable)
 # Server Admin
-alert_role_id = "833118102018588687"
+alert_role_id = "1481097679663792219"
 
 # How long a container can be in "restarting" state before alerting (seconds)
 restart_timeout_seconds = 60
