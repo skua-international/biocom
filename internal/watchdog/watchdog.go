@@ -51,7 +51,7 @@ func New(cfgSource *config.Config, dockerClient *docker.Client, session *discord
 // Run starts the watchdog loop. Blocks until context is cancelled.
 func (w *Watchdog) Run(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
-	w.logger.Info("Watchdog started",
+	w.logger.Info("Watchdog Run() entered",
 		"interval", cfg.Interval,
 		"containers", cfg.Containers,
 		"channel", cfg.AlertChannelID,
@@ -69,8 +69,10 @@ func (w *Watchdog) Run(ctx context.Context) {
 		)
 	})
 
-	// Warmup: establish baseline state without alerting
+	// Warmup: establish baseline state and alert for downed containers
+	w.logger.Info("Watchdog calling warmup")
 	w.warmup(ctx)
+	w.logger.Info("Watchdog warmup returned")
 
 	for {
 		select {
@@ -110,6 +112,13 @@ func (w *Watchdog) warmup(ctx context.Context) {
 
 		w.mu.Lock()
 		state := w.states[name]
+		wasDownBefore := state.wasDown
+
+		w.logger.Info("Watchdog warmup checking container",
+			"container", name,
+			"info_nil", info == nil,
+			"wasDown_before", wasDownBefore,
+		)
 
 		// Set initial state and alert for downed containers (only if not already marked)
 		switch {
@@ -119,10 +128,11 @@ func (w *Watchdog) warmup(ctx context.Context) {
 				state.wasDown = true
 				state.lastAlerted = time.Now()
 				w.mu.Unlock()
+				w.logger.Info("Watchdog warmup: alerting for missing container", "container", name)
 				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
-				w.logger.Info("Watchdog warmup: container not found", "container", name)
 			} else {
 				w.mu.Unlock()
+				w.logger.Info("Watchdog warmup: skipping alert, already marked down", "container", name)
 			}
 
 		case info.State == "running", info.State == "created":
