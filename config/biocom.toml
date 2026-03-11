@@ -1,0 +1,40 @@
+# BIOCOM Configuration
+# Server Admin Role ID: 833118102018588687
+# Zeus Role ID: 833118102018588686
+
+[roles]
+# Role IDs allowed for admin commands (containers, logs)
+# Server Admin
+admin = ["833118102018588687"]
+
+# Role IDs allowed for zeus commands (intercept, upload_mission, upload_preset)
+# Server Admin, Zeus
+zeus = ["833118102018588687", "833118102018588686"]
+
+[watchdog]
+# Enable/disable the container watchdog
+enabled = true
+
+# How often to check container status (seconds)
+interval_seconds = 1
+
+# Discord channel ID where alerts are posted
+# board channel
+alert_channel_id = "833118103998824503"
+
+# Discord role ID to ping on alerts (leave empty to disable)
+# Server Admin
+alert_role_id = "833118102018588687"
+
+# How long a container can be in "restarting" state before alerting (seconds)
+restart_timeout_seconds = 20
+
+# Container names to monitor
+containers = [
+    "skua_teamspeak-db-1",
+    "skua_teamspeak-teamspeak-1",
+    "postgres_skua_prod-pgadmin-1",
+    "postgres_skua_prod-postgres-1",
+    "minecraft_reservas-mc-1",
+    "skua-offshoot-valheim-valheim-1",
+]

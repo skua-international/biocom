@@ -1,20 +1,123 @@
 name: skua-biocom
-version: "3.8"
 
 services:
   biocom:
-    user: root
     build:
       context: .
-    image: biocom-bot
+      dockerfile: Dockerfile
+      target: biocom
+    image: biocom-bot:latest
     container_name: biocom-bot
     restart: unless-stopped
+
+    # Run as root to access Docker socket (required for container ops)
+    user: root
+
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+        reservations:
+          memory: 32M
+          cpus: '0.1'
+
     environment:
       DOCKER_HOST: unix:///var/run/docker.sock
+      UPLOAD_BASE: /app/uploads
+      BIOCOM_CONFIG: /app/config/biocom.toml
+      BIOCOM_DB: /app/data/biocom.db
+      TZ: UTC
+
     env_file:
       - .env
+
     volumes:
+      - ./config:/app/config:ro
       - ./uploads/missions:/app/uploads/missions:rw
       - ./uploads/presets:/app/uploads/presets:rw
-      # Docker
+      - biocom-data:/app/data:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  watchdog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: watchdog
+    image: biocom-watchdog:latest
+    container_name: biocom-watchdog
+    restart: unless-stopped
+
+    user: root
+
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.25'
+        reservations:
+          memory: 16M
+          cpus: '0.05'
+
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      BIOCOM_CONFIG: /app/config/biocom.toml
+      BIOCOM_DB: /app/data/biocom.db
+      TZ: UTC
+
+    volumes:
+      - ./config:/app/config:ro
+      - biocom-data:/app/data:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Test container that perpetually restarts (for watchdog testing)
+  # Usage: docker compose --profile test up -d crashloop
+  # Remove: docker compose rm -sf crashloop
+  crashloop:
+    image: alpine:latest
+    container_name: crashloop
+    restart: always
+    network_mode: none
+    command: ["sh", "-c", "echo 'crashing...' && sleep 2 && exit 1"]
+    profiles:
+      - test
+
+  # Test container that runs stably (for recovery testing)
+  # Usage: docker compose --profile test up -d stable
+  # Test flow:
+  #   1. Start it — watchdog sees it healthy, no alert
+  #   2. Stop it  — docker compose stop stable — triggers "CONTAINER DOWN"
+  #   3. Start it — docker compose start stable — after 60s triggers "RECOVERED"
+  stable:
+    image: alpine:latest
+    container_name: stable
+    restart: unless-stopped
+    network_mode: none
+    command: ["sh", "-c", "echo 'running...' && sleep infinity"]
+    profiles:
+      - test
+
+volumes:
+  biocom-data:
