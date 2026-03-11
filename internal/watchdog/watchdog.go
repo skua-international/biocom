@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/skua/biocom/internal/config"
 	"github.com/skua/biocom/internal/docker"
+	"github.com/skua/biocom/internal/store"
 )
 
 // stableThreshold is how long a container must stay running before we
@@ -26,11 +25,11 @@ type containerState struct {
 	runningSince time.Time // when we first saw "running" after a down event
 }
 
-// Watchdog monitors containers and alerts via Discord.
+// Watchdog monitors containers and queues alerts via SQLite.
 type Watchdog struct {
 	cfgSource    *config.Config
 	dockerClient *docker.Client
-	session      *discordgo.Session
+	store        *store.Store
 	logger       *slog.Logger
 
 	mu     sync.Mutex
@@ -38,11 +37,11 @@ type Watchdog struct {
 }
 
 // New creates a new Watchdog instance.
-func New(cfgSource *config.Config, dockerClient *docker.Client, session *discordgo.Session, logger *slog.Logger) *Watchdog {
+func New(cfgSource *config.Config, dockerClient *docker.Client, st *store.Store, logger *slog.Logger) *Watchdog {
 	return &Watchdog{
 		cfgSource:    cfgSource,
 		dockerClient: dockerClient,
-		session:      session,
+		store:        st,
 		logger:       logger,
 		states:       make(map[string]*containerState),
 	}
@@ -54,7 +53,6 @@ func (w *Watchdog) Run(ctx context.Context) {
 	w.logger.Info("Watchdog Run() entered",
 		"interval", cfg.Interval,
 		"containers", cfg.Containers,
-		"channel", cfg.AlertChannelID,
 	)
 
 	ticker := time.NewTicker(cfg.Interval)
@@ -85,9 +83,8 @@ func (w *Watchdog) Run(ctx context.Context) {
 	}
 }
 
-// warmup establishes baseline container state without sending alerts.
-// This prevents spurious alerts for containers that are already down when
-// the watchdog starts.
+// warmup establishes baseline container state. Alerts for containers that
+// are already down when the watchdog starts.
 func (w *Watchdog) warmup(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
 
@@ -112,54 +109,50 @@ func (w *Watchdog) warmup(ctx context.Context) {
 
 		w.mu.Lock()
 		state := w.states[name]
-		wasDownBefore := state.wasDown
 
 		w.logger.Info("Watchdog warmup checking container",
 			"container", name,
 			"info_nil", info == nil,
-			"wasDown_before", wasDownBefore,
+			"wasDown_before", state.wasDown,
 		)
 
-		// Set initial state and alert for downed containers (only if not already marked)
 		switch {
 		case info == nil:
-			// Container does not exist — alert once, mark as down
 			if !state.wasDown {
 				state.wasDown = true
 				state.lastAlerted = time.Now()
 				w.mu.Unlock()
 				w.logger.Info("Watchdog warmup: alerting for missing container", "container", name)
-				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
+				w.queueAlert(ctx, "red", name, "CONTAINER NOT FOUND",
+					"Container does not exist or has been removed.")
 			} else {
 				w.mu.Unlock()
-				w.logger.Debug("Watchdog warmup: skipping alert, already marked down", "container", name)
 			}
 
 		case info.State == "running", info.State == "created":
-			// Healthy
 			state.wasDown = false
 			w.mu.Unlock()
 
 		case info.State == "restarting":
-			// Already restarting — alert once, mark and track
 			if !state.wasDown {
 				state.wasDown = true
 				state.restartSeen = time.Now()
 				state.lastAlerted = time.Now()
 				w.mu.Unlock()
-				w.alert(fmt.Sprintf("🟡 **CONTAINER STUCK RESTARTING:** `%s`\nStatus: `%s`", name, info.Status))
+				w.queueAlert(ctx, "yellow", name, "CONTAINER STUCK RESTARTING",
+					fmt.Sprintf("Status: `%s`", info.Status))
 				w.logger.Info("Watchdog warmup: container restarting", "container", name)
 			} else {
 				w.mu.Unlock()
 			}
 
 		default:
-			// exited, paused, dead, etc. — alert once, mark as down
 			if !state.wasDown {
 				state.wasDown = true
 				state.lastAlerted = time.Now()
 				w.mu.Unlock()
-				w.alert(fmt.Sprintf("🔴 **CONTAINER DOWN:** `%s`\nState: `%s` — Status: `%s`", name, info.State, info.Status))
+				w.queueAlert(ctx, "red", name, "CONTAINER DOWN",
+					fmt.Sprintf("State: `%s` — Status: `%s`", info.State, info.Status))
 				w.logger.Info("Watchdog warmup: container down", "container", name, "state", info.State)
 			} else {
 				w.mu.Unlock()
@@ -170,11 +163,11 @@ func (w *Watchdog) warmup(ctx context.Context) {
 	w.logger.Info("Watchdog warmup complete", "containers", len(cfg.Containers))
 }
 
-// check inspects all watched containers and sends alerts as needed.
+// check inspects all watched containers and queues alerts as needed.
 func (w *Watchdog) check(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
 
-	w.logger.Debug("Watchdog check() called", "containers", len(cfg.Containers), "enabled", cfg.Enabled, "states", w.states)
+	w.logger.Debug("Watchdog check() called", "containers", len(cfg.Containers), "enabled", cfg.Enabled)
 
 	if !cfg.Enabled || len(cfg.Containers) == 0 {
 		return
@@ -182,13 +175,11 @@ func (w *Watchdog) check(ctx context.Context) {
 
 	// Sync states map with current container list
 	w.mu.Lock()
-	// Add new containers
 	for _, name := range cfg.Containers {
 		if _, ok := w.states[name]; !ok {
 			w.states[name] = &containerState{}
 		}
 	}
-	// Remove containers no longer in config
 	current := make(map[string]struct{}, len(cfg.Containers))
 	for _, name := range cfg.Containers {
 		current[name] = struct{}{}
@@ -211,40 +202,44 @@ func (w *Watchdog) check(ctx context.Context) {
 
 		w.mu.Lock()
 		state := w.states[name]
-		wasDownBefore := state.wasDown
 
 		w.logger.Debug("Watchdog check() examining container",
 			"container", name,
 			"info_nil", info == nil,
-			"wasDown", wasDownBefore,
+			"wasDown", state.wasDown,
 		)
 
 		switch {
 		case info == nil:
-			// Container does not exist
 			state.runningSince = time.Time{}
 			if !state.wasDown {
 				state.wasDown = true
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
 				w.mu.Unlock()
-				w.logger.Info("Watchdog check(): alerting for missing container", "container", name)
-				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
+				w.queueAlert(ctx, "red", name, "CONTAINER NOT FOUND",
+					"Container does not exist or has been removed.")
 			} else {
 				w.mu.Unlock()
-				w.logger.Debug("Watchdog check(): skipping alert, wasDown=true", "container", name)
 			}
 
 		case info.State == "running", info.State == "created":
 			if !state.wasDown {
-				// Healthy and not recovering — reset tracking
-				state.runningSince = time.Time{}
-				state.restartSeen = time.Time{}
+				if state.runningSince.IsZero() {
+					state.runningSince = now
+				}
+				// Only clear restart tracking after sustained stable running.
+				// This prevents crashlooping containers (brief running -> restarting)
+				// from resetting the restart timer on every brief "running" blip.
+				if now.Sub(state.runningSince) >= stableThreshold {
+					state.restartSeen = time.Time{}
+					state.runningSince = time.Time{}
+				}
 				w.mu.Unlock()
 				break
 			}
 
-			// Was down — wait for stable running before declaring recovery
+			// Was down -- wait for stable running before declaring recovery
 			if state.runningSince.IsZero() {
 				state.runningSince = now
 			}
@@ -253,43 +248,39 @@ func (w *Watchdog) check(ctx context.Context) {
 				state.runningSince = time.Time{}
 				state.restartSeen = time.Time{}
 				w.mu.Unlock()
-				w.alert(fmt.Sprintf("🟢 **CONTAINER RECOVERED:** `%s`\nStatus: `%s`", name, info.Status))
+				w.queueAlert(ctx, "green", name, "CONTAINER RECOVERED",
+					fmt.Sprintf("Status: `%s`", info.Status))
 			} else {
 				w.mu.Unlock()
 			}
 
 		case info.State == "restarting":
-			// Track how long it's been restarting
 			if state.restartSeen.IsZero() {
 				state.restartSeen = now
 			}
 			state.runningSince = time.Time{}
 
-			// Alert once when restart exceeds the timeout
 			stuck := now.Sub(state.restartSeen) >= cfg.RestartTTL
 			if stuck && !state.wasDown {
 				state.wasDown = true
 				state.lastAlerted = now
 				w.mu.Unlock()
-				w.alert(fmt.Sprintf(
-					"🟡 **CONTAINER STUCK RESTARTING:** `%s`\nRestarting for %s. Status: `%s`",
-					name,
-					now.Sub(state.restartSeen).Round(time.Second),
-					info.Status,
-				))
+				w.queueAlert(ctx, "yellow", name, "CONTAINER STUCK RESTARTING",
+					fmt.Sprintf("Restarting for %s. Status: `%s`",
+						now.Sub(state.restartSeen).Round(time.Second), info.Status))
 			} else {
 				w.mu.Unlock()
 			}
 
 		default:
-			// exited, paused, dead, created, etc.
 			state.runningSince = time.Time{}
 			if !state.wasDown {
 				state.wasDown = true
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
 				w.mu.Unlock()
-				w.alert(fmt.Sprintf("🔴 **CONTAINER DOWN:** `%s`\nState: `%s` — Status: `%s`", name, info.State, info.Status))
+				w.queueAlert(ctx, "red", name, "CONTAINER DOWN",
+					fmt.Sprintf("State: `%s` — Status: `%s`", info.State, info.Status))
 			} else {
 				w.mu.Unlock()
 			}
@@ -297,39 +288,29 @@ func (w *Watchdog) check(ctx context.Context) {
 	}
 }
 
-// alert sends a message to the configured alert channel.
-func (w *Watchdog) alert(message string) {
+// queueAlert inserts an alert into the SQLite store for the bot to pick up.
+func (w *Watchdog) queueAlert(ctx context.Context, level, container, title, body string) {
 	cfg := w.cfgSource.Watchdog()
 
-	if cfg.AlertChannelID == "" {
-		w.logger.Warn("Watchdog alert skipped: no alert channel configured", "message", message)
+	a := &store.Alert{
+		Level:     level,
+		Container: container,
+		Title:     title,
+		Body:      body,
+		RolePing:  cfg.AlertRoleID != "",
+		CreatedAt: time.Now().UTC(),
+	}
+
+	id, err := w.store.InsertAlert(ctx, a)
+	if err != nil {
+		w.logger.Error("Watchdog failed to queue alert", "error", err, "container", container)
 		return
 	}
 
-	// Mention role if configured
-	rolePing := ""
-	if cfg.AlertRoleID != "" {
-		rolePing = fmt.Sprintf("<@&%s> ", cfg.AlertRoleID)
-	}
-
-	msg := fmt.Sprintf("%s⚠️ **BIOCOM WATCHDOG**\n%s\n— %s", rolePing, message, time.Now().UTC().Format(time.RFC3339))
-
-	// Discord 2000 char limit
-	if len(msg) > 1900 {
-		msg = msg[:1900] + "\n…truncated"
-	}
-
-	w.logger.Info("Watchdog sending alert",
-		"channel", cfg.AlertChannelID,
-		"role", cfg.AlertRoleID,
-		"message", strings.SplitN(message, "\n", 2)[0],
+	w.logger.Info("Watchdog alert queued",
+		"id", id,
+		"level", level,
+		"container", container,
+		"title", title,
 	)
-
-	_, err := w.session.ChannelMessageSend(cfg.AlertChannelID, msg)
-	if err != nil {
-		w.logger.Error("Watchdog failed to send alert",
-			"channel", cfg.AlertChannelID,
-			"error", err,
-		)
-	}
 }

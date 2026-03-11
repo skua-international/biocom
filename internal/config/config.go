@@ -199,6 +199,26 @@ func (c *Config) WatchFile(ctx context.Context) error {
 	}
 }
 
+// LoadWatchdog reads configuration for the watchdog service.
+// Only requires BIOCOM_CONFIG env var; does not need Discord credentials.
+func LoadWatchdog(logger *slog.Logger) (*Config, error) {
+	configPath := os.Getenv("BIOCOM_CONFIG")
+	if configPath == "" {
+		configPath = "biocom.toml"
+	}
+
+	cfg := &Config{
+		configPath: configPath,
+		logger:     logger,
+	}
+
+	if err := cfg.reload(); err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	return cfg, nil
+}
+
 // hashFile returns a simple hash of the config file contents for change detection.
 func (c *Config) hashFile() string {
 	data, err := os.ReadFile(c.configPath)

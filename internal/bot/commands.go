@@ -94,16 +94,12 @@ func (b *Bot) getCommandDefinitions() []*discordgo.ApplicationCommand {
 
 // sanitizeFilename cleans a filename for safe storage.
 func sanitizeFilename(raw string) string {
-	// URL decode
 	decoded, err := url.QueryUnescape(raw)
 	if err != nil {
 		decoded = raw
 	}
 
-	// Extract basename
 	decoded = filepath.Base(decoded)
-
-	// Remove unsafe characters
 	sanitized := safeFilenameRegex.ReplaceAllString(decoded, "")
 	return strings.TrimSpace(sanitized)
 }
@@ -162,7 +158,6 @@ func (b *Bot) handleIntercept(_ context.Context, s *discordgo.Session, i *discor
 
 	data := i.ApplicationCommandData()
 
-	// Extract options
 	var message string
 	var channelID string
 
@@ -175,18 +170,15 @@ func (b *Bot) handleIntercept(_ context.Context, s *discordgo.Session, i *discor
 		}
 	}
 
-	// Default to current channel
 	if channelID == "" {
 		channelID = i.ChannelID
 	}
 
-	// Check Zeus role
 	if !hasAnyRoleID(i.Member, b.cfg.Roles().Zeus) {
-		followupEphemeral(s, i, "BIOCOM: UNAUTHORIZED OPERATOR. ACCESS DENIED.")
+		followupEphemeral(s, i, MsgUnauthorized)
 		return
 	}
 
-	// Send message
 	_, err := s.ChannelMessageSend(channelID, message)
 	if err != nil {
 		b.logger.Error("Failed to send intercept message", "error", err, "channelID", channelID)
@@ -197,19 +189,25 @@ func (b *Bot) handleIntercept(_ context.Context, s *discordgo.Session, i *discor
 	followupEphemeral(s, i, "BIOCOM: MESSAGE SENT.")
 }
 
-// handleUploadMission handles the /upload_mission command.
-func (b *Bot) handleUploadMission(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) {
+// uploadParams describes one kind of file upload.
+type uploadParams struct {
+	extension string // e.g. ".pbo", ".html"
+	directory string // save directory path
+	noun      string // e.g. "MISSION", "PRESET"
+	logLabel  string // e.g. "Mission upload"
+}
+
+// handleUpload is the shared implementation for file upload commands.
+func (b *Bot) handleUpload(_ context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, p uploadParams) {
 	deferEphemeral(s, i)
 
-	// Check Zeus role
 	if !hasAnyRoleID(i.Member, b.cfg.Roles().Zeus) {
-		followupEphemeral(s, i, "BIOCOM: UNAUTHORIZED OPERATOR. ACCESS DENIED.")
+		followupEphemeral(s, i, MsgUnauthorized)
 		return
 	}
 
 	data := i.ApplicationCommandData()
 
-	// Get attachment
 	var attachmentID string
 	for _, opt := range data.Options {
 		if opt.Name == "file" {
@@ -219,162 +217,91 @@ func (b *Bot) handleUploadMission(ctx context.Context, s *discordgo.Session, i *
 
 	attachment, ok := data.Resolved.Attachments[attachmentID]
 	if !ok {
-		followupEphemeral(s, i, "BIOCOM: ATTACHMENT NOT FOUND.")
+		followupEphemeral(s, i, MsgAttachmentMissing)
 		return
 	}
 
-	b.logger.Info("Mission upload",
+	b.logger.Info(p.logLabel,
 		"user", i.Member.User.Username,
 		"filename", attachment.Filename,
 		"size", attachment.Size,
 	)
 
-	// Validate extension
-	if !strings.HasSuffix(strings.ToLower(attachment.Filename), ".pbo") {
-		followupEphemeral(s, i, "BIOCOM: INVALID FILE TYPE. EXPECTED `.pbo`.")
+	if !strings.HasSuffix(strings.ToLower(attachment.Filename), p.extension) {
+		followupEphemeral(s, i, fmt.Sprintf("BIOCOM: INVALID FILE TYPE. EXPECTED `%s`.", p.extension))
 		return
 	}
 
-	// Sanitize filename
 	safeName := sanitizeFilename(attachment.Filename)
-	if !strings.HasSuffix(strings.ToLower(safeName), ".pbo") {
-		followupEphemeral(s, i, "BIOCOM: INVALID FILENAME AFTER SANITIZATION.")
+	if !strings.HasSuffix(strings.ToLower(safeName), p.extension) {
+		followupEphemeral(s, i, MsgInvalidFilename)
 		return
 	}
 
-	// Download and save file
-	savePath := filepath.Join(b.cfg.MissionsDir, safeName)
+	savePath := filepath.Join(p.directory, safeName)
 	if err := downloadFile(attachment.URL, savePath); err != nil {
-		b.logger.Error("Failed to download mission file", "error", err)
-		followupEphemeral(s, i, "BIOCOM: DOWNLOAD FAILURE.")
+		b.logger.Error("Failed to download file", "error", err)
+		followupEphemeral(s, i, MsgDownloadFailure)
 		return
 	}
 
-	// Post to channel
 	file, err := os.Open(savePath)
 	if err != nil {
 		b.logger.Error("Failed to open saved file", "error", err)
-		followupEphemeral(s, i, "BIOCOM: FILE ACCESS FAILURE.")
+		followupEphemeral(s, i, MsgFileAccessFailure)
 		return
 	}
 	defer file.Close()
 
 	_, err = s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{
-		Content: "BIOCOM: MISSION INGESTED.",
-		Files: []*discordgo.File{
-			{
-				Name:   safeName,
-				Reader: file,
-			},
-		},
+		Content: fmt.Sprintf("BIOCOM: %s INGESTED.", p.noun),
+		Files:   []*discordgo.File{{Name: safeName, Reader: file}},
 	})
 	if err != nil {
-		b.logger.Error("Failed to broadcast mission", "error", err)
-		followupEphemeral(s, i, "BIOCOM: BROADCAST FAILURE.")
+		b.logger.Error("Failed to broadcast file", "error", err)
+		followupEphemeral(s, i, MsgBroadcastFailure)
 		return
 	}
 
-	followupEphemeral(s, i, fmt.Sprintf("BIOCOM: MISSION `%s` STORED AND BROADCAST.", safeName))
+	followupEphemeral(s, i, fmt.Sprintf("BIOCOM: %s `%s` STORED AND BROADCAST.", p.noun, safeName))
+}
+
+// handleUploadMission handles the /upload_mission command.
+func (b *Bot) handleUploadMission(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) {
+	b.handleUpload(ctx, s, i, uploadParams{
+		extension: ".pbo",
+		directory: b.cfg.MissionsDir,
+		noun:      "MISSION",
+		logLabel:  "Mission upload",
+	})
 }
 
 // handleUploadPreset handles the /upload_preset command.
 func (b *Bot) handleUploadPreset(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	deferEphemeral(s, i)
-
-	// Check Zeus role
-	if !hasAnyRoleID(i.Member, b.cfg.Roles().Zeus) {
-		followupEphemeral(s, i, "BIOCOM: UNAUTHORIZED OPERATOR. ACCESS DENIED.")
-		return
-	}
-
-	data := i.ApplicationCommandData()
-
-	// Get attachment
-	var attachmentID string
-	for _, opt := range data.Options {
-		if opt.Name == "file" {
-			attachmentID = opt.Value.(string)
-		}
-	}
-
-	attachment, ok := data.Resolved.Attachments[attachmentID]
-	if !ok {
-		followupEphemeral(s, i, "BIOCOM: ATTACHMENT NOT FOUND.")
-		return
-	}
-
-	b.logger.Info("Preset upload",
-		"user", i.Member.User.Username,
-		"filename", attachment.Filename,
-		"size", attachment.Size,
-	)
-
-	// Validate extension
-	if !strings.HasSuffix(strings.ToLower(attachment.Filename), ".html") {
-		followupEphemeral(s, i, "BIOCOM: INVALID FILE TYPE. EXPECTED `.html`.")
-		return
-	}
-
-	// Sanitize filename
-	safeName := sanitizeFilename(attachment.Filename)
-	if !strings.HasSuffix(strings.ToLower(safeName), ".html") {
-		followupEphemeral(s, i, "BIOCOM: INVALID FILENAME AFTER SANITIZATION.")
-		return
-	}
-
-	// Download and save file
-	savePath := filepath.Join(b.cfg.PresetsDir, safeName)
-	if err := downloadFile(attachment.URL, savePath); err != nil {
-		b.logger.Error("Failed to download preset file", "error", err)
-		followupEphemeral(s, i, "BIOCOM: DOWNLOAD FAILURE.")
-		return
-	}
-
-	// Post to channel
-	file, err := os.Open(savePath)
-	if err != nil {
-		b.logger.Error("Failed to open saved file", "error", err)
-		followupEphemeral(s, i, "BIOCOM: FILE ACCESS FAILURE.")
-		return
-	}
-	defer file.Close()
-
-	_, err = s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{
-		Content: "BIOCOM: PRESET INGESTED.",
-		Files: []*discordgo.File{
-			{
-				Name:   safeName,
-				Reader: file,
-			},
-		},
+	b.handleUpload(ctx, s, i, uploadParams{
+		extension: ".html",
+		directory: b.cfg.PresetsDir,
+		noun:      "PRESET",
+		logLabel:  "Preset upload",
 	})
-	if err != nil {
-		b.logger.Error("Failed to broadcast preset", "error", err)
-		followupEphemeral(s, i, "BIOCOM: BROADCAST FAILURE.")
-		return
-	}
-
-	followupEphemeral(s, i, fmt.Sprintf("BIOCOM: PRESET `%s` STORED AND BROADCAST.", safeName))
 }
 
 // handleContainers handles the /containers command.
 func (b *Bot) handleContainers(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	// Check guild
 	if i.GuildID != b.cfg.GuildID {
 		respondEphemeral(s, i, "BIOCOM: COMMAND UNAVAILABLE.")
 		return
 	}
 
-	// Check Server Admin role
 	if !hasAnyRoleID(i.Member, b.cfg.Roles().Admin) {
-		respondEphemeral(s, i, "BIOCOM: UNAUTHORIZED OPERATOR. ACCESS DENIED.")
+		respondEphemeral(s, i, MsgUnauthorized)
 		return
 	}
 
 	deferEphemeral(s, i)
 
 	if b.dockerClient == nil {
-		followupEphemeral(s, i, "BIOCOM: DOCKER ACCESS FAILURE.\nNo container runtime connected.")
+		followupEphemeral(s, i, MsgDockerNoRuntime)
 		return
 	}
 
@@ -397,7 +324,6 @@ func (b *Bot) handleContainers(ctx context.Context, s *discordgo.Session, i *dis
 
 	output := strings.Join(lines, "\n")
 
-	// Discord message limit safety
 	if len(output) > 1900 {
 		output = output[:1900] + "\n…truncated"
 	}
@@ -439,7 +365,6 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 		return
 	}
 
-	// Find the focused option
 	var typed string
 	for _, opt := range data.Options {
 		if opt.Focused {
@@ -448,7 +373,6 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 		}
 	}
 
-	// Get running containers
 	ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
 	defer cancel()
 
@@ -470,7 +394,7 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 				Value: c.Name,
 			})
 		}
-		if len(choices) >= 25 { // Discord max
+		if len(choices) >= 25 {
 			break
 		}
 	}
@@ -485,16 +409,15 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 
 // handleLogs handles the /logs command.
 func (b *Bot) handleLogs(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	// Check Server Admin role
 	if !hasAnyRoleID(i.Member, b.cfg.Roles().Admin) {
-		respondEphemeral(s, i, "BIOCOM: UNAUTHORIZED OPERATOR. ACCESS DENIED.")
+		respondEphemeral(s, i, MsgUnauthorized)
 		return
 	}
 
 	deferEphemeral(s, i)
 
 	if b.dockerClient == nil {
-		followupEphemeral(s, i, "BIOCOM: DOCKER ACCESS FAILURE.\nNo container runtime connected.")
+		followupEphemeral(s, i, MsgDockerNoRuntime)
 		return
 	}
 
@@ -515,7 +438,6 @@ func (b *Bot) handleLogs(ctx context.Context, s *discordgo.Session, i *discordgo
 		return
 	}
 
-	// If filter specified, fetch all lines; otherwise last 100
 	tail := 100
 	if filter != "" {
 		tail = 0
@@ -528,7 +450,6 @@ func (b *Bot) handleLogs(ctx context.Context, s *discordgo.Session, i *discordgo
 		return
 	}
 
-	// Apply regex filter if specified
 	if filter != "" {
 		re, err := regexp.Compile(filter)
 		if err != nil {
@@ -552,16 +473,13 @@ func (b *Bot) handleLogs(ctx context.Context, s *discordgo.Session, i *discordgo
 		logs = strings.Join(matched, "\n")
 	}
 
-	// Format output in code block
 	output := fmt.Sprintf("BIOCOM: LOGS `%s`", containerName)
 	if filter != "" {
 		output += fmt.Sprintf(" (filter: `%s`)", filter)
 	}
 	output += fmt.Sprintf("\n```\n%s\n```", logs)
 
-	// Discord 2000 char limit — truncate from the top to keep recent lines
 	if len(output) > 1900 {
-		// Keep the suffix (most recent lines)
 		codeEnd := "\n```"
 		maxContent := 1900 - len(output[:strings.Index(output, "```\n")+4]) - len(codeEnd) - 15
 		if maxContent < 100 {
@@ -575,7 +493,6 @@ func (b *Bot) handleLogs(ctx context.Context, s *discordgo.Session, i *discordgo
 			output += fmt.Sprintf(" (filter: `%s`)", filter)
 		}
 		output += fmt.Sprintf("\n```\n%s\n```", logs)
-		// Final safety
 		if len(output) > 1900 {
 			output = output[:1900] + "\n```"
 		}

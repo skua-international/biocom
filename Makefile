@@ -1,9 +1,7 @@
-.PHONY: all build run clean test lint docker-build docker-run help
+.PHONY: all build build-bot build-watchdog run clean test lint docker-build docker-run help
 
 # Build variables
-BINARY_NAME := biocom
 BUILD_DIR := ./build
-CMD_DIR := ./cmd/biocom
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags="-w -s -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
@@ -14,16 +12,30 @@ GOARCH ?= amd64
 
 all: lint test build
 
-## build: Build the binary
-build:
-	@echo "Building $(BINARY_NAME)..."
-	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod=vendor $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
-	@echo "Built: $(BUILD_DIR)/$(BINARY_NAME)"
+## build: Build both binaries
+build: build-bot build-watchdog
 
-## run: Run the application locally
+## build-bot: Build the bot binary
+build-bot:
+	@echo "Building biocom..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod=vendor $(LDFLAGS) -o $(BUILD_DIR)/biocom ./cmd/biocom
+	@echo "Built: $(BUILD_DIR)/biocom"
+
+## build-watchdog: Build the watchdog binary
+build-watchdog:
+	@echo "Building watchdog..."
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod=vendor $(LDFLAGS) -o $(BUILD_DIR)/watchdog ./cmd/watchdog
+	@echo "Built: $(BUILD_DIR)/watchdog"
+
+## run: Run the bot locally
 run:
-	go run -mod=vendor $(CMD_DIR)/main.go
+	go run -mod=vendor ./cmd/biocom/main.go
+
+## run-watchdog: Run the watchdog locally
+run-watchdog:
+	go run -mod=vendor ./cmd/watchdog/main.go
 
 ## test: Run tests
 test:
@@ -50,9 +62,10 @@ deps:
 	go mod tidy
 	go mod vendor
 
-## docker-build: Build Docker image
+## docker-build: Build both Docker images
 docker-build:
-	docker build -t biocom-bot:latest .
+	docker build --target biocom -t biocom-bot:latest .
+	docker build --target watchdog -t biocom-watchdog:latest .
 
 ## docker-run: Run with Docker Compose
 docker-run:

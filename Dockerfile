@@ -1,42 +1,54 @@
 # syntax=docker/dockerfile:1
 
 # ============================================================
-# Build stage
+# Build stage (shared)
 # ============================================================
 FROM golang:1.25-alpine AS builder
 
-# Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /src
 
-# Copy source code and vendored dependencies
 COPY . .
 
-# Build static binary using vendored dependencies
+# Build bot binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor \
     -ldflags="-w -s -extldflags '-static'" \
     -o /biocom \
     ./cmd/biocom
 
-# Create minimal passwd/group for scratch (so Docker can resolve user names)
+# Build watchdog binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor \
+    -ldflags="-w -s -extldflags '-static'" \
+    -o /watchdog \
+    ./cmd/watchdog
+
+# Minimal passwd/group for scratch
 RUN printf 'root:x:0:0:root:/root:/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/sbin/nologin\n' > /etc/passwd.scratch \
  && printf 'root:x:0:\nnobody:x:65534:\n' > /etc/group.scratch
 
 # ============================================================
-# Final stage - minimal runtime image
+# Runtime: biocom bot
 # ============================================================
-FROM scratch
+FROM scratch AS biocom
 
-# Import CA certificates and timezone data from builder
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-
-# Minimal passwd/group so Docker can resolve user names (scratch has none)
 COPY --from=builder /etc/passwd.scratch /etc/passwd
 COPY --from=builder /etc/group.scratch /etc/group
-
-# Copy binary
 COPY --from=builder /biocom /biocom
 
 ENTRYPOINT ["/biocom"]
+
+# ============================================================
+# Runtime: watchdog
+# ============================================================
+FROM scratch AS watchdog
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /etc/passwd.scratch /etc/passwd
+COPY --from=builder /etc/group.scratch /etc/group
+COPY --from=builder /watchdog /watchdog
+
+ENTRYPOINT ["/watchdog"]
