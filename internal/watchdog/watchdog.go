@@ -174,7 +174,7 @@ func (w *Watchdog) warmup(ctx context.Context) {
 func (w *Watchdog) check(ctx context.Context) {
 	cfg := w.cfgSource.Watchdog()
 
-	w.logger.Debug("Watchdog tick", "containers", len(cfg.Containers), "enabled", cfg.Enabled)
+	w.logger.Info("Watchdog check() called", "containers", len(cfg.Containers), "enabled", cfg.Enabled, "states", w.states)
 
 	if !cfg.Enabled || len(cfg.Containers) == 0 {
 		return
@@ -200,6 +200,13 @@ func (w *Watchdog) check(ctx context.Context) {
 
 		w.mu.Lock()
 		state := w.states[name]
+		wasDownBefore := state.wasDown
+
+		w.logger.Info("Watchdog check() examining container",
+			"container", name,
+			"info_nil", info == nil,
+			"wasDown", wasDownBefore,
+		)
 
 		switch {
 		case info == nil:
@@ -210,9 +217,11 @@ func (w *Watchdog) check(ctx context.Context) {
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
 				w.mu.Unlock()
+				w.logger.Info("Watchdog check(): alerting for missing container", "container", name)
 				w.alert(fmt.Sprintf("🔴 **CONTAINER NOT FOUND:** `%s`\nContainer does not exist or has been removed.", name))
 			} else {
 				w.mu.Unlock()
+				w.logger.Info("Watchdog check(): skipping alert, wasDown=true", "container", name)
 			}
 
 		case info.State == "running", info.State == "created":
