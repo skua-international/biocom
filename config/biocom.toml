@@ -24,13 +24,17 @@ alert_channel_id = "833118103998824503"
 
 # Discord role ID to ping on alerts (leave empty to disable)
 # Server Admin
-alert_role_id = "833118102018588690"
+alert_role_id = "833118102018588687"
 
 # How long a container can be in "restarting" state before alerting (seconds)
-restart_timeout_seconds = 3
+restart_timeout_seconds = 60
 
 # Container names to monitor
 containers = [
-    "arma3server",
-    "biocom-bot",
+    "skua_teamspeak-db-1",
+    "skua_teamspeak-teamspeak-1",
+    "postgres_skua_prod-pgadmin-1",
+    "postgres_skua_prod-postgres-1",
+    "minecraft_reservas-mc-1",
+    "skua-offshoot-valheim-valheim-1",
 ]

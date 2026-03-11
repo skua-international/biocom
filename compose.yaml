@@ -50,3 +50,14 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Test container that perpetually restarts (for watchdog testing)
+  # Usage: docker compose up -d crashloop
+  # Remove: docker compose rm -sf crashloop
+  crashloop:
+    image: alpine:latest
+    container_name: crashloop
+    restart: always
+    command: ["sh", "-c", "echo 'crashing...' && sleep 2 && exit 1"]
+    profiles:
+      - test
