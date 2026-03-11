@@ -1,0 +1,35 @@
+[package]
+name = "biocom"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Discord
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+
+# Docker
+bollard = "0.16"
+
+# Config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# Utils
+anyhow = "1"
+thiserror = "1"
+regex = "1"
+urlencoding = "2"
+chrono = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
