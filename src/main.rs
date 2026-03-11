@@ -46,14 +46,17 @@ async fn main() -> Result<()> {
     let docker = docker.map(Arc::new);
     let bot = Bot::new(shared_config.clone(), docker.clone());
 
+    info!("Discord token loaded (length: {})", config.discord_token.len());
+
     // Build serenity client
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES;
 
+    info!("Building Discord client...");
     let mut client = Client::builder(&config.discord_token, intents)
         .event_handler(bot)
         .await?;
 
-    info!("Discord client built");
+    info!("Discord client built successfully");
 
     // Get HTTP handle for watchdog before starting client
     let http = client.http.clone();
@@ -81,11 +84,17 @@ async fn main() -> Result<()> {
         warn!("Watchdog enabled but no container runtime available");
     }
 
-    info!("BIOCOM operational");
+    info!("BIOCOM operational, starting client...");
 
     // Start the client (blocks until shutdown)
-    if let Err(e) = client.start().await {
-        error!(error = %e, "Client error");
+    match client.start().await {
+        Ok(_) => {
+            info!("Client exited normally");
+        }
+        Err(e) => {
+            error!(error = %e, "Client error");
+            return Err(e.into());
+        }
     }
 
     info!("BIOCOM shutdown complete");
