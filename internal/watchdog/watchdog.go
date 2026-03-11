@@ -17,12 +17,23 @@ import (
 // repeated down/recovery alerts.
 const stableThreshold = 60 * time.Second
 
+// Down-state reasons. Empty string means the container is healthy.
+const (
+	reasonNotFound   = "not_found"
+	reasonRestarting = "restarting"
+	reasonDown       = "down"
+)
+
 // containerState tracks per-container alert state.
 type containerState struct {
 	lastAlerted  time.Time
-	wasDown      bool
+	downReason   string    // "", "not_found", "restarting", "down"
 	restartSeen  time.Time // first time we saw "restarting"
 	runningSince time.Time // when we first saw "running" after a down event
+}
+
+func (s *containerState) isDown() bool {
+	return s.downReason != ""
 }
 
 // Watchdog monitors containers and queues alerts via SQLite.
@@ -113,13 +124,13 @@ func (w *Watchdog) warmup(ctx context.Context) {
 		w.logger.Info("Watchdog warmup checking container",
 			"container", name,
 			"info_nil", info == nil,
-			"wasDown_before", state.wasDown,
+			"downReason", state.downReason,
 		)
 
 		switch {
 		case info == nil:
-			if !state.wasDown {
-				state.wasDown = true
+			if state.downReason != reasonNotFound {
+				state.downReason = reasonNotFound
 				state.lastAlerted = time.Now()
 				w.mu.Unlock()
 				w.logger.Info("Watchdog warmup: alerting for missing container", "container", name)
@@ -130,12 +141,12 @@ func (w *Watchdog) warmup(ctx context.Context) {
 			}
 
 		case info.State == "running", info.State == "created":
-			state.wasDown = false
+			state.downReason = ""
 			w.mu.Unlock()
 
 		case info.State == "restarting":
-			if !state.wasDown {
-				state.wasDown = true
+			if state.downReason != reasonRestarting {
+				state.downReason = reasonRestarting
 				state.restartSeen = time.Now()
 				state.lastAlerted = time.Now()
 				w.mu.Unlock()
@@ -147,8 +158,8 @@ func (w *Watchdog) warmup(ctx context.Context) {
 			}
 
 		default:
-			if !state.wasDown {
-				state.wasDown = true
+			if state.downReason != reasonDown {
+				state.downReason = reasonDown
 				state.lastAlerted = time.Now()
 				w.mu.Unlock()
 				w.queueAlert(ctx, "red", name, "CONTAINER DOWN",
@@ -206,14 +217,15 @@ func (w *Watchdog) check(ctx context.Context) {
 		w.logger.Debug("Watchdog check() examining container",
 			"container", name,
 			"info_nil", info == nil,
-			"wasDown", state.wasDown,
+			"downReason", state.downReason,
 		)
 
 		switch {
 		case info == nil:
+			// Container does not exist
 			state.runningSince = time.Time{}
-			if !state.wasDown {
-				state.wasDown = true
+			if state.downReason != reasonNotFound {
+				state.downReason = reasonNotFound
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
 				w.mu.Unlock()
@@ -224,7 +236,7 @@ func (w *Watchdog) check(ctx context.Context) {
 			}
 
 		case info.State == "running", info.State == "created":
-			if !state.wasDown {
+			if !state.isDown() {
 				if state.runningSince.IsZero() {
 					state.runningSince = now
 				}
@@ -244,7 +256,7 @@ func (w *Watchdog) check(ctx context.Context) {
 				state.runningSince = now
 			}
 			if now.Sub(state.runningSince) >= stableThreshold {
-				state.wasDown = false
+				state.downReason = ""
 				state.runningSince = time.Time{}
 				state.restartSeen = time.Time{}
 				w.mu.Unlock()
@@ -261,12 +273,8 @@ func (w *Watchdog) check(ctx context.Context) {
 			state.runningSince = time.Time{}
 
 			stuck := now.Sub(state.restartSeen) >= cfg.RestartTTL
-			// Alert if stuck AND we haven't already alerted for this restart cycle.
-			// This covers both the fresh case (!wasDown) and the transition case
-			// (was down for a different reason, e.g. "not found" -> now restarting).
-			alreadyAlerted := !state.lastAlerted.Before(state.restartSeen)
-			if stuck && (!state.wasDown || !alreadyAlerted) {
-				state.wasDown = true
+			if stuck && state.downReason != reasonRestarting {
+				state.downReason = reasonRestarting
 				state.lastAlerted = now
 				w.mu.Unlock()
 				w.queueAlert(ctx, "yellow", name, "CONTAINER STUCK RESTARTING",
@@ -277,9 +285,10 @@ func (w *Watchdog) check(ctx context.Context) {
 			}
 
 		default:
+			// exited, paused, dead, etc.
 			state.runningSince = time.Time{}
-			if !state.wasDown {
-				state.wasDown = true
+			if state.downReason != reasonDown {
+				state.downReason = reasonDown
 				state.lastAlerted = now
 				state.restartSeen = time.Time{}
 				w.mu.Unlock()

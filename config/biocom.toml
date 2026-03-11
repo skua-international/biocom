@@ -27,7 +27,7 @@ alert_channel_id = "1481147942407503932"
 alert_role_id = "1481097679663792219"
 
 # How long a container can be in "restarting" state before alerting (seconds)
-restart_timeout_seconds = 60
+restart_timeout_seconds = 10
 
 # Container names to monitor
 containers = [
