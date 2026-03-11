@@ -27,11 +27,10 @@ alert_channel_id = "1481147942407503932"
 alert_role_id = "1481097679663792219"
 
 # How long a container can be in "restarting" state before alerting (seconds)
-restart_timeout_seconds = 10
+restart_timeout_seconds = 20
 
 # Container names to monitor
 containers = [
-    "crashloop",
     "skua_teamspeak-db-1",
     "skua_teamspeak-teamspeak-1",
     "postgres_skua_prod-pgadmin-1",

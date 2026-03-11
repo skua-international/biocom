@@ -93,7 +93,7 @@ services:
         max-file: "3"
 
   # Test container that perpetually restarts (for watchdog testing)
-  # Usage: docker compose up -d crashloop
+  # Usage: docker compose --profile test up -d crashloop
   # Remove: docker compose rm -sf crashloop
   crashloop:
     image: alpine:latest
@@ -101,6 +101,21 @@ services:
     restart: always
     network_mode: none
     command: ["sh", "-c", "echo 'crashing...' && sleep 2 && exit 1"]
+    profiles:
+      - test
+
+  # Test container that runs stably (for recovery testing)
+  # Usage: docker compose --profile test up -d stable
+  # Test flow:
+  #   1. Start it — watchdog sees it healthy, no alert
+  #   2. Stop it  — docker compose stop stable — triggers "CONTAINER DOWN"
+  #   3. Start it — docker compose start stable — after 60s triggers "RECOVERED"
+  stable:
+    image: alpine:latest
+    container_name: stable
+    restart: unless-stopped
+    network_mode: none
+    command: ["sh", "-c", "echo 'running...' && sleep infinity"]
     profiles:
       - test
 
