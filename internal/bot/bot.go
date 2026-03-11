@@ -35,11 +35,6 @@ func New(cfg *config.Config, dockerClient *docker.Client, logger *slog.Logger) (
 
 	session.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages
 
-	// Disable automatic retries - they can cause duplicate messages if the
-	// original request succeeded but returned an error status
-	session.ShouldRetryOnRateLimit = false
-	session.MaxRestRetries = 0
-
 	bot := &Bot{
 		session:      session,
 		cfg:          cfg,

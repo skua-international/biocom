@@ -162,18 +162,16 @@ func (c *Config) reload() error {
 }
 
 // WatchFile polls the TOML config file for changes and reloads automatically.
-// Uses stat-based polling since inotify doesn't work across Docker bind mounts.
+// Uses content-hash polling since inotify and mtime don't work reliably
+// across Docker bind mounts.
 // Blocks until context is cancelled.
 func (c *Config) WatchFile(ctx context.Context) error {
 	const pollInterval = 2 * time.Second
 
 	c.logger.Info("Polling config file for changes", "path", c.configPath, "poll_interval", pollInterval)
 
-	// Seed with current mod time (ignore error — file may not exist yet)
-	var lastModTime time.Time
-	if info, err := os.Stat(c.configPath); err == nil {
-		lastModTime = info.ModTime()
-	}
+	// Seed with current file content hash
+	lastHash := c.hashFile()
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -183,16 +181,11 @@ func (c *Config) WatchFile(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			info, err := os.Stat(c.configPath)
-			if err != nil {
-				// File might have been removed temporarily; skip this tick
+			currentHash := c.hashFile()
+			if currentHash == lastHash {
 				continue
 			}
-			modTime := info.ModTime()
-			if modTime.Equal(lastModTime) {
-				continue
-			}
-			lastModTime = modTime
+			lastHash = currentHash
 
 			if err := c.reload(); err != nil {
 				c.logger.Error("Config reload failed", "error", err)
@@ -201,4 +194,19 @@ func (c *Config) WatchFile(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// hashFile returns a simple hash of the config file contents for change detection.
+func (c *Config) hashFile() string {
+	data, err := os.ReadFile(c.configPath)
+	if err != nil {
+		return ""
+	}
+	// Simple FNV-style hash — no crypto needed, just change detection
+	var h uint64 = 14695981039346656037
+	for _, b := range data {
+		h ^= uint64(b)
+		h *= 1099511628211
+	}
+	return fmt.Sprintf("%x", h)
 }
