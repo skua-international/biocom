@@ -3,7 +3,7 @@
 # ============================================================
 # Build stage
 # ============================================================
-FROM rust:1.77-alpine AS builder
+FROM rust:1.94-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache musl-dev ca-certificates tzdata
