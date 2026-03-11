@@ -261,7 +261,11 @@ func (w *Watchdog) check(ctx context.Context) {
 			state.runningSince = time.Time{}
 
 			stuck := now.Sub(state.restartSeen) >= cfg.RestartTTL
-			if stuck && !state.wasDown {
+			// Alert if stuck AND we haven't already alerted for this restart cycle.
+			// This covers both the fresh case (!wasDown) and the transition case
+			// (was down for a different reason, e.g. "not found" -> now restarting).
+			alreadyAlerted := !state.lastAlerted.Before(state.restartSeen)
+			if stuck && (!state.wasDown || !alreadyAlerted) {
 				state.wasDown = true
 				state.lastAlerted = now
 				w.mu.Unlock()

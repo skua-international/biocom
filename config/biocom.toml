@@ -31,6 +31,7 @@ restart_timeout_seconds = 60
 
 # Container names to monitor
 containers = [
+    "crashloop",
     "skua_teamspeak-db-1",
     "skua_teamspeak-teamspeak-1",
     "postgres_skua_prod-pgadmin-1",

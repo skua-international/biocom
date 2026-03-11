@@ -99,6 +99,7 @@ services:
     image: alpine:latest
     container_name: crashloop
     restart: always
+    network_mode: none
     command: ["sh", "-c", "echo 'crashing...' && sleep 2 && exit 1"]
     profiles:
       - test
