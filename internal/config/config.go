@@ -14,14 +14,16 @@ import (
 
 // WatchdogConfig holds watchdog settings from the TOML config.
 type WatchdogConfig struct {
-	Enabled        bool          `toml:"enabled"`
-	IntervalSec    int           `toml:"interval_seconds"`
-	AlertChannelID string        `toml:"alert_channel_id"`
-	AlertRoleID    string        `toml:"alert_role_id"`
-	Containers     []string      `toml:"containers"`
-	RestartTimeout int           `toml:"restart_timeout_seconds"`
-	Interval       time.Duration `toml:"-"`
-	RestartTTL     time.Duration `toml:"-"`
+	Enabled         bool          `toml:"enabled"`
+	IntervalSec     int           `toml:"interval_seconds"`
+	AlertChannelID  string        `toml:"alert_channel_id"`
+	AlertRoleID     string        `toml:"alert_role_id"`
+	Containers      []string      `toml:"containers"`
+	RestartTimeout  int           `toml:"restart_timeout_seconds"`
+	StartupDelaySec int           `toml:"startup_delay_seconds"`
+	Interval        time.Duration `toml:"-"`
+	RestartTTL      time.Duration `toml:"-"`
+	StartupDelay    time.Duration `toml:"-"`
 }
 
 // RolesConfig holds per-command-group role ID arrays.
@@ -145,6 +147,8 @@ func (c *Config) reload() error {
 		w.RestartTimeout = 300
 	}
 	w.RestartTTL = time.Duration(w.RestartTimeout) * time.Second
+
+	w.StartupDelay = time.Duration(w.StartupDelaySec) * time.Second
 
 	c.mu.Lock()
 	c.watchdog = fc.Watchdog

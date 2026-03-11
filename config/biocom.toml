@@ -29,6 +29,10 @@ alert_role_id = "833118102018588687"
 # How long a container can be in "restarting" state before alerting (seconds)
 restart_timeout_seconds = 20
 
+# Delay before watchdog starts monitoring (seconds)
+# Prevents alert storms after host restarts
+startup_delay_seconds = 300
+
 # Container names to monitor
 containers = [
     "skua_teamspeak-db-1",

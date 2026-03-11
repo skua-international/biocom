@@ -64,7 +64,18 @@ func (w *Watchdog) Run(ctx context.Context) {
 	w.logger.Info("Watchdog Run() entered",
 		"interval", cfg.Interval,
 		"containers", cfg.Containers,
+		"startup_delay", cfg.StartupDelay,
 	)
+
+	// Delay startup to avoid alert storms after host restarts
+	if cfg.StartupDelay > 0 {
+		w.logger.Info("Watchdog delaying startup", "delay", cfg.StartupDelay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(cfg.StartupDelay):
+		}
+	}
 
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
