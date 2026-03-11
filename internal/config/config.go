@@ -172,6 +172,7 @@ func (c *Config) WatchFile(ctx context.Context) error {
 
 	// Seed with current file content hash
 	lastHash := c.hashFile()
+	c.logger.Info("Config watcher seeded", "path", c.configPath, "hash", lastHash)
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -185,6 +186,7 @@ func (c *Config) WatchFile(ctx context.Context) error {
 			if currentHash == lastHash {
 				continue
 			}
+			c.logger.Info("Config file change detected", "old_hash", lastHash, "new_hash", currentHash)
 			lastHash = currentHash
 
 			if err := c.reload(); err != nil {
