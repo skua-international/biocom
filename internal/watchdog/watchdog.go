@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/skua/biocom/internal/config"
@@ -43,8 +44,9 @@ type Watchdog struct {
 	store        *store.Store
 	logger       *slog.Logger
 
-	mu     sync.Mutex
-	states map[string]*containerState
+	mu           sync.Mutex
+	states       map[string]*containerState
+	shuttingDown atomic.Bool
 }
 
 // New creates a new Watchdog instance.
@@ -312,8 +314,24 @@ func (w *Watchdog) check(ctx context.Context) {
 	}
 }
 
+// Shutdown suppresses future alerts. Call this before cancelling the context
+// so that in-flight checks don't queue alerts during host shutdown.
+func (w *Watchdog) Shutdown() {
+	w.shuttingDown.Store(true)
+	w.logger.Info("Watchdog alert suppression enabled (host shutting down)")
+}
+
 // queueAlert inserts an alert into the SQLite store for the bot to pick up.
 func (w *Watchdog) queueAlert(ctx context.Context, level, container, title, body string) {
+	if w.shuttingDown.Load() {
+		w.logger.Info("Watchdog alert suppressed (shutting down)",
+			"level", level,
+			"container", container,
+			"title", title,
+		)
+		return
+	}
+
 	cfg := w.cfgSource.Watchdog()
 
 	a := &store.Alert{

@@ -80,6 +80,7 @@ func main() {
 	<-stop
 
 	logger.Info("Shutdown signal received")
+	wd.Shutdown()
 	cancel()
 	logger.Info("BIOCOM WATCHDOG shutdown complete")
 }
