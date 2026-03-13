@@ -1,0 +1,13 @@
+[Unit]
+Description=Stop BIOCOM watchdog before Docker shuts down
+After=docker.service
+BindsTo=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/bin/docker stop -t 5 biocom-watchdog
+
+[Install]
+WantedBy=multi-user.target
